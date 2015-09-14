@@ -1,0 +1,211 @@
+#!/bin/sh
+# ZFS statistics for FreeBSD
+#
+# Author: Tikhon Kolomytsin <vshturman@gmail.com>
+# Author of original plugin for munin: David Bjornsson <dabb@lolnet.is>
+#
+# Usage: check_zfs_stats_FUNCTION
+#
+# Available functions:
+#	efficiency - ARC efficiency
+#	cachehitlist - Cache hit by cache list
+#	cachehitdtype - Cache hit by data type
+#	dmuprefetch - DMU prefetch
+#	utilization - ARC size
+#	l2utilization - L2ARC size
+#	l2efficiency - L2ARC efficiency
+#
+
+FUNCTION=$(basename $0 | cut -d_ -f4)
+
+PAGESIZE=`/sbin/sysctl -n vm.stats.vm.v_page_size`
+MEMSIZE=`/sbin/sysctl -n vm.stats.vm.v_page_count`
+MEMMAX=`echo 'scale=2;' $PAGESIZE*$MEMSIZE | /usr/bin/bc -q`
+BC='/usr/bin/bc -q'
+SYS='/sbin/sysctl -n'
+
+#
+# Sysctl macros
+#
+
+ARC_HITS=`$SYS kstat.zfs.misc.arcstats.hits`
+ARC_MISSES=`$SYS kstat.zfs.misc.arcstats.misses`
+
+DEMAND_DATA_HITS=`$SYS kstat.zfs.misc.arcstats.demand_data_hits`
+DEMAND_DATA_MISSES=`$SYS kstat.zfs.misc.arcstats.demand_data_misses`
+DEMAND_METADATA_HITS=`$SYS kstat.zfs.misc.arcstats.demand_metadata_hits`
+DEMAND_METADATA_MISSES=`$SYS kstat.zfs.misc.arcstats.demand_metadata_misses`
+
+MFU_GHOST_HITS=`$SYS kstat.zfs.misc.arcstats.mfu_ghost_hits`
+MFU_HITS=`$SYS kstat.zfs.misc.arcstats.mfu_hits`
+MRU_GHOST_HITS=`$SYS kstat.zfs.misc.arcstats.mru_ghost_hits`
+MRU_HITS=`$SYS kstat.zfs.misc.arcstats.mru_hits`
+
+PREFETCH_DATA_HITS=`$SYS kstat.zfs.misc.arcstats.prefetch_data_hits`
+PREFETCH_DATA_MISSES=`$SYS kstat.zfs.misc.arcstats.prefetch_data_misses`
+PREFETCH_METADATA_HITS=`$SYS kstat.zfs.misc.arcstats.prefetch_metadata_hits`
+PREFETCH_METADATA_MISSES=`$SYS kstat.zfs.misc.arcstats.prefetch_metadata_misses`
+
+DMU_HITS=`$SYS kstat.zfs.misc.zfetchstats.hits`
+DMU_MISSES=`$SYS kstat.zfs.misc.zfetchstats.misses`
+
+SIZE=`$SYS kstat.zfs.misc.arcstats.size`
+MRU_SIZE=`$SYS kstat.zfs.misc.arcstats.p`
+MAX_SIZE=`$SYS kstat.zfs.misc.arcstats.c_max`
+MIN_SIZE=`$SYS kstat.zfs.misc.arcstats.c_min`
+TARGET_SIZE=`$SYS kstat.zfs.misc.arcstats.c`
+
+L2_SIZE=`$SYS kstat.zfs.misc.arcstats.l2_size`
+L2_HDR_SIZE=`$SYS kstat.zfs.misc.arcstats.l2_hdr_size`
+
+L2_HITS=`$SYS kstat.zfs.misc.arcstats.l2_hits`
+L2_MISSES=`$SYS kstat.zfs.misc.arcstats.l2_misses`
+
+#
+# Calculation macros
+#
+
+ANON_HITS=`echo "$ARC_HITS-($MFU_HITS+$MRU_HITS+$MFU_GHOST_HITS+$MRU_GHOST_HITS)" | $BC`
+ARC_ACCESSES_TOTAL=`echo "$ARC_HITS+$ARC_MISSES" | $BC`
+DEMAND_DATA_TOTAL=`echo "$DEMAND_DATA_HITS+$DEMAND_DATA_MISSES" | $BC`
+PREFETCH_DATA_TOTAL=`echo "$PREFETCH_DATA_HITS+$PREFETCH_DATA_MISSES" | $BC`
+REAL_HITS=`echo "$MFU_HITS+$MRU_HITS" | $BC`
+
+CACHE_HIT_RATIO_PERC=`echo "scale=2 ; (100*$ARC_HITS/$ARC_ACCESSES_TOTAL)" | $BC`
+CACHE_MISS_RATIO_PERC=`echo "scale=2 ; (100*$ARC_MISSES/$ARC_ACCESSES_TOTAL)" | $BC`
+ACTUAL_HIT_RATIO_PERC=`echo "scale=2 ; (100*$REAL_HITS/$ARC_ACCESSES_TOTAL)" | $BC`
+DATA_DEMAND_EFFICIENCY_PERC=`echo "scale=2 ; (100*$DEMAND_DATA_HITS/$DEMAND_DATA_TOTAL)" | $BC`
+if [ $PREFETCH_DATA_TOTAL -gt 0 ]; then
+	DATA_PREFETCH_EFFICENCY_PERC=`echo "scale=2 ; (100*$PREFETCH_DATA_HITS/$PREFETCH_DATA_TOTAL)" | $BC`
+else
+	DATA_PREFETCH_EFFICENCY_PERC=0
+fi
+
+ANONYMOUSLY_USED_PERC=`echo "scale=2 ; (100*$ANON_HITS/$ARC_HITS)" | $BC`
+MOST_RECENTLY_USED_PERC=`echo "scale=2 ; (100*$MRU_HITS/$ARC_HITS)" | $BC`
+MOST_FREQUENTLY_USED_PERC=`echo "scale=2 ; (100*$MFU_HITS/$ARC_HITS)" | $BC`
+MOST_RECENTLY_USED_GHOST_PERC=`echo "scale=2 ; (100*$MRU_GHOST_HITS/$ARC_HITS)" | $BC`
+MOST_FREQUENTLY_USED_GHOST_PERC=`echo "scale=2 ; (100*$MFU_GHOST_HITS/$ARC_HITS)" | $BC`
+
+DEMAND_DATA_HIT_PERC=`echo "scale=2 ; (100*$DEMAND_DATA_HITS/$ARC_HITS)" | $BC`
+DEMAND_DATA_MISS_PERC=`echo "scale=2 ; (100*$DEMAND_DATA_MISSES/$ARC_MISSES)" | $BC`
+PREFETCH_DATA_HIT_PERC=`echo "scale=2 ; (100*$PREFETCH_DATA_HITS/$ARC_HITS)" | $BC`
+PREFETCH_DATA_MISS_PERC=`echo "scale=2 ; (100*$PREFETCH_DATA_MISSES/$ARC_MISSES)" | $BC`
+DEMAND_METADATA_HIT_PERC=`echo "scale=2 ; (100*$DEMAND_METADATA_HITS/$ARC_HITS)" | $BC`
+DEMAND_METADATA_MISS_PERC=`echo "scale=2 ; (100*$DEMAND_METADATA_MISSES/$ARC_MISSES)" | $BC`
+PREFETCH_METADATA_HIT_PERC=`echo "scale=2 ; (100*$PREFETCH_METADATA_HITS/$ARC_HITS)" | $BC`
+PREFETCH_METADATA_MISSES_PERC=`echo "scale=2 ; (100*$PREFETCH_METADATA_MISSES/$ARC_MISSES)" | $BC`
+
+DMU_TOTAL=`echo "$DMU_HITS+$DMU_MISSES" | $BC`
+if [ $DMU_TOTAL -gt 0 ]; then 
+	DMU_MISSES_PERC=`echo "scale=2 ; (100*$DMU_MISSES/$DMU_TOTAL)" | $BC`
+	DMU_HITS_PERC=`echo "scale=2 ; (100*$DMU_HITS/$DMU_TOTAL)" | $BC`
+else
+	DMU_MISSES_PERC=0
+	DMU_HITS_PERC=0
+fi
+
+if [ $SIZE -gt $TARGET_SIZE ]; then
+	MFU_SIZE=`echo "$SIZE-$MRU_SIZE" | $BC`
+else
+	MFU_SIZE=`echo "$TARGET_SIZE-$MRU_SIZE" | $BC`
+fi
+
+L2_ACCESSES_TOTAL=`echo "$L2_HITS+$L2_MISSES" | $BC`
+if [ $L2_ACCESSES_TOTAL -gt 0 ]; then
+	L2_HIT_RATIO_PERC=`echo "scale=2 ; (100*$L2_HITS/$L2_ACCESSES_TOTAL)" | $BC`
+	L2_MISS_RATIO_PERC=`echo "scale=2 ; (100*$L2_MISSES/$L2_ACCESSES_TOTAL)" | $BC`
+fi
+
+efficiency() {
+    result='hits='$CACHE_HIT_RATIO_PERC'%; '
+    result=$result'misses='$CACHE_MISS_RATIO_PERC'%; '
+    result=$result'actual_hits='$ACTUAL_HIT_RATIO_PERC'%; '
+    result=$result'data_demand_efficiency='$DATA_DEMAND_EFFICIENCY_PERC'%; '
+    result=$result'data_prefetch_efficiency='$DATA_PREFETCH_EFFICENCY_PERC'%;'
+    
+    echo $CACHE_HIT_RATIO_PERC'%|'$result
+}
+
+cachehitlist() {
+    result='cache_list_anon='$ANONYMOUSLY_USED_PERC'%; '
+    result=$result'cache_list_most_rec='$MOST_RECENTLY_USED_PERC'%; '
+    result=$result'cache_list_most_freq='$MOST_FREQUENTLY_USED_PERC'%; '
+    result=$result'cache_list_most_rec_ghost='$MOST_RECENTLY_USED_GHOST_PERC'%; '
+    result=$result'cache_list_most_freq_ghost='$MOST_FREQUENTLY_USED_GHOST_PERC'%;'
+
+    echo $result'|'$result
+}
+
+cachehitdtype() {
+    result='data_type_demand_hits='$DEMAND_DATA_HIT_PERC'%; '
+    result=$result'data_type_demand_misses='$DEMAND_DATA_MISS_PERC'%; '
+    result=$result'data_type_prefetch_hits='$PREFETCH_DATA_HIT_PERC'%; '
+    result=$result'data_type_prefetch_misses='$PREFETCH_DATA_MISS_PERC'%; '
+    result=$result'data_type_demand_metadata_hits='$DEMAND_METADATA_HIT_PERC'%; '
+    result=$result'data_type_demand_metadata_misses='$DEMAND_METADATA_MISS_PERC'%; '
+    result=$result'data_type_prefetch_metadata_hits='$PREFETCH_METADATA_HIT_PERC'%; '
+    result=$result'data_type_prefetch_metadata_misses='$PREFETCH_METADATA_MISSES_PERC'%;'
+    
+    echo $result'|'$result
+}
+
+dmuprefetch() {
+    result='hits='$DMU_HITS_PERC'%; '
+    result=$result'misses='$DMU_MISSES_PERC'%;'
+    
+    echo $DMU_HITS_PERC'%|'$result
+}
+
+utilization() {
+    SIZE_MB=`echo "scale=0 ; ($SIZE/1024/1024)" | $BC`
+
+    result='max_size='$MAX_SIZE'B; '
+    result=$result'size='$SIZE'B; '
+    result=$result'min_size='$MIN_SIZE'B; '
+    result=$result'target_size='$TARGET_SIZE'B; '
+    result=$result'recently_size='$MRU_SIZE'B; '
+    result=$result'frequently_size='$MFU_SIZE'B;'
+
+    echo $SIZE_MB'MB|'$result
+}
+
+l2utilization() {
+    L2_SIZE_MB=`echo "scale=0 ; ($L2_SIZE/1024/1024)" | $BC`
+    
+    result='size='$L2_SIZE'B; '
+    result=$result'hdr_size='$L2_HDR_SIZE'B;'
+
+    echo $SIZE_MB'MB|'$result
+}
+
+l2efficiency() {
+    result='l2_hits='$L2_HIT_RATIO_PERC'%; '
+    result=$result'l2_misses='$L2_MISS_RATIO_PERC'%;'
+
+    echo $L2_HIT_RATIO_PERC'%|'$result
+}
+
+case "$FUNCTION" in
+        efficiency)
+                efficiency $1
+                ;;
+        cachehitlist)
+                cachehitlist $1
+                ;;
+        cachehitdtype)
+                cachehitdtype $1
+                ;;
+        dmuprefetch)
+                dmuprefetch $1
+                ;;
+        utilization)
+                utilization $1
+                ;;
+	l2utilization)
+		l2utilization $1
+		;;
+	l2efficiency)
+		l2efficiency $1
+		;;
+esac
