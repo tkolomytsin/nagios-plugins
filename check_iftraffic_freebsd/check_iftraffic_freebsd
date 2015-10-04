@@ -1,0 +1,125 @@
+#!/bin/sh
+# nagios plugin to monitor network interfaces in FreeBSD
+
+PROGNAME=`basename $0`
+PROGPATH=`echo $0 | sed -e 's,[\\/][^\\/][^\\/]*$,,'`
+REVISION="0.1"
+PATH="/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin"
+
+export PATH
+
+. $PROGPATH/utils.sh
+
+print_help() {
+    print_revision $PROGNAME $REVISION
+    echo ""
+    print_usage
+    echo ""
+    echo "This plugin checks network interfaces in FreeBSD."
+    echo ""
+    support
+    exit $STATE_OK
+}
+
+print_usage() {
+    echo "Usage: $PROGNAME IFACE_NAME WARNING_RANGE CRITICAL_RANGE"
+    echo "For example: $PROGNAME vtnet0 7500000 10000000"
+}
+
+nag_check() {
+    IFACE=$1
+    WARN_R=$2
+    CRIT_R=$3
+
+    if [ -z $IFACE ] || [ -z $WARN_R ] || [ -z $CRIT_R ]; then
+        print_usage
+        EXIT_ST=$STATE_UNKNOWN
+        exit $EXIT_ST
+    fi
+
+    IN_DF="/tmp/check_iftraffic_freebsd_${IFACE}_in.tmp"
+    OUT_DF="/tmp/check_iftraffic_freebsd_${IFACE}_out.tmp"
+    
+    NS_OUT=`/usr/bin/netstat -i -b -n -I $IFACE`
+
+    IN_BYTES=`echo "$NS_OUT" | awk '
+    /<Link#[0-9]*>/ {
+        if (NF == 10) { 
+                print "rbytes.value", $6;
+                print "obytes.value", $9;
+        } else if (NF == 11) {
+                if ($4 ~ /:/) {
+                        print $7;
+                } else {
+                        print $7;
+                }
+        } else { # NF == 12
+                print $8;
+        }
+    }'`
+
+    OUT_BYTES=`echo "$NS_OUT" | awk '
+    /<Link#[0-9]*>/ {
+        if (NF == 10) { 
+                print "rbytes.value", $6;
+                print "obytes.value", $9;
+        } else if (NF == 11) {
+                if ($4 ~ /:/) {
+                        print $10;
+                } else {
+                        print $10;
+                }
+        } else { # NF == 12
+                print $11;
+        }
+    }'`
+
+    if [ ! -f $IN_DF ] || [ ! -f $OUT_DF ]; then
+        echo $IN_BYTES > $IN_DF
+        echo $OUT_BYTES > $OUT_DF
+        echo "Creating tmp files.."
+        EXIT_ST=$STATE_OK
+        exit $STATE_OK
+    fi
+
+    IN_BW=$(( ($IN_BYTES-`cat $IN_DF`)/(`date +%s`-`stat -f %m $IN_DF`) ))
+
+    OUT_BW=$(( ($OUT_BYTES-`cat $OUT_DF`)/(`date +%s`-`stat -f %m $OUT_DF`) ))
+
+    echo "In: ${IN_BW}B/s, Out: ${OUT_BW}B/s|In=${IN_BW}B/s; Out=${OUT_BW}B/s"
+
+    if check_range $IN_BW $CRIT_R || check_range $OUT_BW $CRIT_R; then
+        EXIT_ST=$STATE_CRITICAL
+    elif check_range $IN_BW $WARN_R || check_range $OUT_BW $WARN_R; then
+        EXIT_ST=$STATE_WARNING
+    else
+        EXIT_ST=$STATE_OK
+    fi
+    
+    echo $IN_BYTES > $IN_DF
+    echo $OUT_BYTES > $OUT_DF
+
+}
+
+case "$1" in
+    --help)
+        print_help
+        exit $STATE_OK
+        ;;
+    -h)
+        print_help
+        exit $STATE_OK
+        ;;
+    --version)
+        print_revision $PROGNAME $REVISION
+        exit $STATE_OK
+        ;;
+    -V)
+        print_revision $PROGNAME $REVISION
+        exit $STATE_OK
+        ;;
+    *)
+        nag_check $1 $2 $3
+        exit $EXIT_ST
+        ;;
+esac
