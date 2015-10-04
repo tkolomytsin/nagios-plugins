@@ -1,0 +1,162 @@
+#!/bin/sh
+# nagios plugin to monitor errors and collisions on network interfaces in FreeBSD
+
+PROGNAME=`basename $0`
+PROGPATH=`echo $0 | sed -e 's,[\\/][^\\/][^\\/]*$,,'`
+REVISION="0.1"
+PATH="/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin"
+
+export PATH
+
+. /usr/local/libexec/nagios/utils.sh
+#. $PROGPATH/utils.sh
+
+print_help() {
+    print_revision $PROGNAME $REVISION
+    echo ""
+    print_usage
+    echo ""
+    echo "This plugin checks errors and collisions on network interfaces in FreeBSD."
+    echo ""
+    support
+    exit $STATE_OK
+}
+
+print_usage() {
+    echo "Usage: $PROGNAME IFACE_NAME WARNING_RANGE CRITICAL_RANGE"
+    echo "For example: $PROGNAME vtnet0 0.1 0.2"
+}
+
+nag_check() {
+    IFACE=$1
+    WARN_R=$2
+    CRIT_R=$3
+
+    if [ -z $IFACE ] || [ -z $WARN_R ] || [ -z $CRIT_R ]; then
+        print_usage
+        EXIT_ST=$STATE_UNKNOWN
+        exit $EXIT_ST
+    fi
+
+    IN_DF="/tmp/check_iferrors_freebsd_${IFACE}_in.tmp"
+    OUT_DF="/tmp/check_iferrors_freebsd_${IFACE}_out.tmp"
+    COL_DF="/tmp/check_iferrors_freebsd_${IFACE}_col.tmp"
+    
+    NS_OUT=`/usr/bin/netstat -i -b -n -I $IFACE`
+
+    IN_ERR=`echo "$NS_OUT" | awk '
+    /<Link#[0-9]*>/ {
+        if (NF == 10) {
+                print "ierrors.value", $5;
+                print "oerrors.value", $8;
+                print "collisions.value", $10;
+        } else if (NF == 11) {
+                if ($4 ~ /:/) {
+                        print "ierrors.value", $6;
+                        print "oerrors.value", $9;
+                        print "collisions.value", $11;
+                } else {
+                        print "ierrors.value", $5;
+                        print "oerrors.value", $9;
+                        print "collisions.value", $11;
+                }
+        } else { # NF == 12
+                print $6;
+        }
+    }'`
+
+    OUT_ERR=`echo "$NS_OUT" | awk '
+    /<Link#[0-9]*>/ {
+        if (NF == 10) {
+                print "ierrors.value", $5;
+                print "oerrors.value", $8;
+                print "collisions.value", $10;
+        } else if (NF == 11) {
+                if ($4 ~ /:/) {
+                        print "ierrors.value", $6;
+                        print "oerrors.value", $9;
+                        print "collisions.value", $11;
+                } else {
+                        print "ierrors.value", $5;
+                        print "oerrors.value", $9;
+                        print "collisions.value", $11;
+                }
+        } else { # NF == 12
+                print $10;
+        }
+    }'`
+
+    COL=`echo "$NS_OUT" | awk '
+    /<Link#[0-9]*>/ {
+        if (NF == 10) {
+                print "ierrors.value", $5;
+                print "oerrors.value", $8;
+                print "collisions.value", $10;
+        } else if (NF == 11) {
+                if ($4 ~ /:/) {
+                        print "ierrors.value", $6;
+                        print "oerrors.value", $9;
+                        print "collisions.value", $11;
+                } else {
+                        print "ierrors.value", $5;
+                        print "oerrors.value", $9;
+                        print "collisions.value", $11;
+                }
+        } else { # NF == 12
+                print $12;
+        }
+    }'`
+
+    if [ ! -f $IN_DF ] || [ ! -f $OUT_DF ] || [ ! -f $COL_DF ]; then
+        echo $IN_ERR > $IN_DF
+        echo $OUT_ERR > $OUT_DF
+        echo $COL > $COL_DF
+        echo "Creating tmp files.."
+        EXIT_ST=$STATE_OK
+        exit $STATE_OK
+    fi
+
+    IN_L=$(( ($IN_ERR-`cat $IN_DF`)/(`date +%s`-`stat -f %m $IN_DF`) ))
+
+    OUT_L=$(( ($OUT_ERR-`cat $OUT_DF`)/(`date +%s`-`stat -f %m $OUT_DF`) ))
+
+    COL_L=$(( ($COL-`cat $COL_DF`)/(`date +%s`-`stat -f %m $COL_DF`) ))
+
+    echo "In errors: ${IN_L}c/s, Out errors: ${OUT_L}c/s, Collisions: ${COL_L}c/s|In_err=${IN_L}c/s; Out_err=${OUT_L}c/s; Coll=${COL_L}c/s"
+
+    if check_range $IN_L $CRIT_R || check_range $OUT_L $CRIT_R || check_range $COL_L $CRIT_R; then
+        EXIT_ST=$STATE_CRITICAL
+    elif check_range $IN_L $WARN_R || check_range $OUT_L $WARN_R || check_range $COL_L $WARN_R; then
+        EXIT_ST=$STATE_WARNING
+    else
+        EXIT_ST=$STATE_OK
+    fi
+    
+    echo $IN_ERR > $IN_DF
+    echo $OUT_ERR > $OUT_DF
+    echo $COL > $COL_DF
+
+}
+
+case "$1" in
+    --help)
+        print_help
+        exit $STATE_OK
+        ;;
+    -h)
+        print_help
+        exit $STATE_OK
+        ;;
+    --version)
+        print_revision $PROGNAME $REVISION
+        exit $STATE_OK
+        ;;
+    -V)
+        print_revision $PROGNAME $REVISION
+        exit $STATE_OK
+        ;;
+    *)
+        nag_check $1 $2 $3
+        exit $EXIT_ST
+        ;;
+esac
