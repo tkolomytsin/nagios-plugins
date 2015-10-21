@@ -106,7 +106,7 @@ nag_check() {
                 print $12;
         }
     }'`
-
+    
     if [ ! -f $IN_DF ] || [ ! -f $OUT_DF ] || [ ! -f $COL_DF ]; then
         echo $IN_ERR > $IN_DF
         echo $OUT_ERR > $OUT_DF
@@ -116,11 +116,24 @@ nag_check() {
         exit $STATE_OK
     fi
 
-    IN_L=$(( ($IN_ERR-`cat $IN_DF`)/(`date +%s`-`stat -f %m $IN_DF`) ))
+    OLD_IN_ERR=`cat $IN_DF`
+    OLD_OUT_ERR=`cat $OUT_DF`
+    OLD_COL=`cat $COL_DF`
 
-    OUT_L=$(( ($OUT_ERR-`cat $OUT_DF`)/(`date +%s`-`stat -f %m $OUT_DF`) ))
+    if [ -z $OLD_IN_ERR ] || [ -z $OLD_OUT_ERR ] || [ -z $OLD_COL ]; then
+        echo $IN_ERR > $IN_DF
+        echo $OUT_ERR > $OUT_DF
+        echo $COL > $COL_DF
+        echo "Recreating tmp files.."
+        EXIT_ST=$STATE_OK
+        exit $STATE_OK
+    fi
+    
+    IN_L=$(( ($IN_ERR-$OLD_IN_ERR)/(`date +%s`-`stat -f %m $IN_DF`) ))
 
-    COL_L=$(( ($COL-`cat $COL_DF`)/(`date +%s`-`stat -f %m $COL_DF`) ))
+    OUT_L=$(( ($OUT_ERR-$OLD_OUT_ERR)/(`date +%s`-`stat -f %m $OUT_DF`) ))
+
+    COL_L=$(( ($COL-$OLD_COL)/(`date +%s`-`stat -f %m $COL_DF`) ))
 
     echo "In errors: ${IN_L}c/s, Out errors: ${OUT_L}c/s, Collisions: ${COL_L}c/s|In_err=${IN_L}c/s; Out_err=${OUT_L}c/s; Coll=${COL_L}c/s"
 
