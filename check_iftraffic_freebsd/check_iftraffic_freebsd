@@ -82,9 +82,20 @@ nag_check() {
         exit $STATE_OK
     fi
 
-    IN_BW=$(( ($IN_BYTES-`cat $IN_DF`)/(`date +%s`-`stat -f %m $IN_DF`) ))
+    OLD_IN_BYTES=`cat $IN_DF`
+    OLD_OUT_BYTES=`cat $OUT_DF`
 
-    OUT_BW=$(( ($OUT_BYTES-`cat $OUT_DF`)/(`date +%s`-`stat -f %m $OUT_DF`) ))
+    if [ -z $OLD_IN_BYTES ] || [ -z $OLD_OUT_BYTES ]; then
+	echo $IN_BYTES > $IN_DF
+        echo $OUT_BYTES > $OUT_DF
+        echo "Recreating tmp files.."
+        EXIT_ST=$STATE_OK
+        exit $STATE_OK
+    fi
+
+    IN_BW=$(( ($IN_BYTES-$OLD_IN_BYTES)/(`date +%s`-`stat -f %m $IN_DF`) ))
+
+    OUT_BW=$(( ($OUT_BYTES-$OLD_OUT_BYTES)/(`date +%s`-`stat -f %m $OUT_DF`) ))
 
     echo "In: ${IN_BW}B/s, Out: ${OUT_BW}B/s|In=${IN_BW}B/s; Out=${OUT_BW}B/s"
 
